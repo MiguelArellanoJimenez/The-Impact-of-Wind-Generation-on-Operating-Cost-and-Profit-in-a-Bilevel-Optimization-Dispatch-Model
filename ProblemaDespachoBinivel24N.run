@@ -1,0 +1,273 @@
+reset; #limpia la consola
+
+#carga el modelo de optimizacion
+model ProblemaDespachoBinivel24N.mod;
+
+printf "\nPrograma despacho economico binivel\n";
+printf "\nInicia lectura de datos de Excel \n";
+
+#lectura de datos para la solucion del problema
+#lee numero de nodos, numero de cargas, numero de generadores, numero de lineas, numero de escenarios y numero de periodos
+table DatosGenerales IN "ODBC" "DatosDespachoBinivel24N.xlsx" "DatosGenerales":
+[],Nnodos,Ncargas,Ngeneradores, Nlineas, Nescenarios, Nperiodos;
+read table DatosGenerales;
+
+#lee costos de operacion y balance asi como limites de compra y venta de generadores
+table CostoGeneradores IN "ODBC" "DatosDespachoBinivel24N.xlsx" "CostoGeneradores":
+[Ngeneradores], CostoGenerador,CostoVenta,CostoCompra,LimiteCompra,LimiteVenta, Flexible, Convencional;
+read table CostoGeneradores;
+
+#lee la potencia maxima y minima de los participantes termicos
+table PotGen IN "ODBC" "DatosDespachoBinivel24N.xlsx" "PotGen":
+[Ngeneradores], PotGenMin, PotGenMax;
+read table PotGen;
+
+#lee la incidencia del participante termico i en el nodo j
+table NG IN "ODBC" "DatosDespachoBinivel24N.xlsx" "NG":
+[Ngeneradores],NG;
+read table NG;
+
+#lee la incidencia de la carga i en el nodo j 
+table IncNodCarga IN "ODBC" "DatosDespachoBinivel24N.xlsx" "IncNodCarga":
+[i~Ncargas],{j in 1..Nnodos} < IncNodCarga[i,j] ~ (j)>;
+read table IncNodCarga;
+
+#lee la incidencia del participante i en el nodo j
+table IncNodGen IN "ODBC" "DatosDespachoBinivel24N.xlsx" "IncNodGen":
+[i~Ngeneradores],{j in 1..Nnodos} < IncNodGen[i,j] ~ (j)>;
+read table IncNodGen;
+
+#lee la incidencia del participante flexible i en el nodo j
+table IncGenFlex IN "ODBC" "DatosDespachoBinivel24N.xlsx" "IncGenFlex":
+[i~Ngeneradores],{j in 1..Nnodos} < IncGenFlex[i,j] ~ (j)>;
+read table IncGenFlex;
+
+#lee la incidencia del participante eolico i en el nodo j
+table IncGenEolico IN "ODBC" "DatosDespachoBinivel24N.xlsx" "IncGenEolico":
+[i~Ngeneradores],{j in 1..Nnodos} < IncGenEolico[i,j] ~ (j)>;
+read table IncGenEolico;
+
+#lee la capacidad maxima y minima de la linea i
+table CapLin IN "ODBC" "DatosDespachoBinivel24N.xlsx" "CapLin":
+[i~Nlineas],{j in 1..4}<CapLin[i,j] ~ (j)>;
+read table CapLin;
+
+#lee la incidencia de la linea i en el nodo j
+table M IN "ODBC" "DatosDespachoBinivel24N.xlsx" "M":
+[i~Nnodos],{j in 1..Nlineas} < M[i,j] ~ (j)>;
+read table M;
+
+#lee matriz de suseptancias
+table B IN "ODBC" "DatosDespachoBinivel24N.xlsx" "B":
+[i~Nnodos],{j in 1..Nnodos} < B[i,j] ~ (j)>;
+read table B;
+
+#lee las potencias probables y probabilidad de incidencia por escenario generacion eolica
+table Eolico IN "ODBC" "DatosDespachoBinivel24N.xlsx" "Eolico":
+[Nescenarios], Probabilidad,PotenciaP;
+read table Eolico;
+
+# lee la carga nodal del sisitema
+table Carga IN "ODBC" "DatosDespachoBinivel24N.xlsx" "Carga":
+[i~Nperiodos],{j in 1..Nnodos} < Carga[i,j] ~ (j)>;
+read table Carga;
+
+printf "\nFinaliza lectura de datos de Excel \n\n";
+
+for{p in 1..Nperiodos by 1} #modificar para repetirse una vez en el estudio de un solo periodo o 24 periodos
+{
+	printf "\n-Hora- %d\n",p;
+	for{q in 1..Nnodos by 1}
+	{
+		#asigna un vector de carga para los nodos del periodo j
+		let L[q]:=Carga[18,q]; #modificado p a 18 para el analisis de un solo periodo
+	}
+	#resuelve el problema de optmizacion
+	solve;
+	#inicializa los acumuladores para calcular el costo total
+	let CBalance:=0;
+	let CTiroC:=0;
+	for{i in 1..Ngeneradores by 1}
+	{
+	let BeneficioEsperanza[i]:=0;	
+	}
+
+	#ciclo para el calculo del costo de la etapa para el balance de potencia 
+	for{i in 1..Ngeneradores by 1}
+	{
+		for{j in 1..Nescenarios by 1}
+		{
+			let PBalance[i,j]:=rPG[i,j]-rNG[i,j];
+			let CBalance:= CBalance + Probabilidad[j]*(CostoVenta[i]*rPG[i,j] 
+			- CostoCompra[i]*rNG[i,j]);
+		}
+	}
+
+	#ciclo para el calculo del costo por tiro de carga 
+	for{i in 1..Nnodos by 1}
+	{
+		for{j in 1..Nescenarios by 1}
+		{
+			let CTiroC:= CTiroC + Probabilidad[j]*2000*Lshed[i,j];
+		}
+	}	
+
+#muestra las potencias optimas de las etapas de operacion del sistema
+printf "\nPotencia a despachar\n";
+display PotGenerador;
+display F;
+display FB;
+
+printf "Potencia requerida para el balance\n";
+display PBalance;
+
+printf "Potencia hacia arriba\n";
+display rPG;
+
+printf "Potencia hacia abajo\n";
+display rNG;
+
+printf "Tiro de Carga\n";
+display Lshed;
+
+printf "Potencia no inyectada al sistema\n";
+display PotDerra;
+
+#muestra los costos optimos de las etapas de operacion del sistema
+printf "\nCosto total\n";
+display CostoTotal;
+
+printf "\nCosto de de la etapa operacion de un dia en adelanto\n";
+let COperacion :=   sum{i in 1..Ngeneradores}(CostoGenerador[i]*PotGenerador[i]);
+display COperacion;
+
+printf "\nCosto de la etapa para el balance de potencia\n";
+display CBalance;
+
+printf "\nCosto del tiro de carga\n";
+display CTiroC;
+
+#ciclo para el calculo de PMLs en la etapa para el balance de potencia
+for{i in 1..Nnodos by 1}
+{
+	for{j in 1..Nescenarios by 1}
+	{
+		let PMLese[i,j]:= abs(BalanceNodalEscenario[i,j] / Probabilidad[j]);
+	}
+}
+
+#muestra los costos optimos de la energia de las etapas de operacion del sistema
+printf "\nCosto de la energia en la etapa de operacion de un dia en adelanto\n";
+display BalanceNodal;
+
+printf "\nCosto de la energia en la etapa para el balance de potencia\n";
+display PMLese;
+
+#ciclo para el calculo del beneficio de los participantes convencionales por escenario
+for{j in 1..Ngeneradores}
+	{
+		let BeneficioEsperanza[j]:=0;
+		for{k in 1..Nescenarios}
+			{
+				if Convencional[j]=1 then
+				{
+					#Beneficio participantes convencionales
+					let Liquidacion[j,k] := PotGenerador[j]*BalanceNodal[NG[j]] + rPG[j,k]*PMLese[NG[j],k] - rNG[j,k]*PMLese[NG[j],k];
+					let CostoOperacion[j,k] := PotGenerador[j]*CostoGenerador[j] + rPG[j,k]*CostoVenta[j] - rNG[j,k]*CostoCompra[j];
+					let Beneficio[j,k]:= Liquidacion[j,k]-CostoOperacion[j,k];
+				}
+				if Convencional[j]=0 then
+				{
+					#Beneficio participantes estocasticos
+					let Liquidacion[j,k] := PotGenerador[j]*BalanceNodal[NG[j]] + (PotenciaP[k]-PotGenerador[j]-PotDerra[k])*PMLese[NG[j],k];
+					let CostoOperacion[j,k] := PotGenerador[j]*CostoGenerador[j];
+					let Beneficio[j,k]:= Liquidacion[j,k]-CostoOperacion[j,k];
+				}
+				let BeneficioEsperanza[j] := BeneficioEsperanza[j] + (Probabilidad[k]*Beneficio[j,k]);
+			}			
+	}
+
+#muestra los beneficios de los participantes, por escenario y en esperanza
+printf "\nBeneficio de los participantes por escenario\n";
+display Beneficio;
+printf "\nBeneficio de los participantes en esperanza\n";
+display BeneficioEsperanza;
+
+#llenado de la tabla de resultados
+for{k in 1..Ngeneradores by 1}
+	{	
+		let Despacho[p,k]:=PotGenerador[k];	
+		for{j in 1..Nescenarios by 1}
+			{
+				let AuPot[k,j]:= rPG[k,j];
+				let DisPot[k,j]:= rNG[k,j];
+				let PD[j]:=PotDerra[j];
+			}
+	}
+for{k in 1..Nnodos by 1}
+	{
+		let PML[p,k]:= BalanceNodal[k];				
+	}
+	
+	#reinicio de las variables
+	reset data Delta, PotGenerador, L, F, DeltaEscenario, rPG, rNG, FB, PotDerra, Lshed, Lambda,
+				MiuFlujoLineaInferior, MiuFlujoLineaSuperior, MiuPotGenSup, MiuPotGenInf, PWMAX;
+
+}
+
+#calculo del tiempo de computo
+let tc_s:=_ampl_elapsed_time + _total_solve_elapsed_time;
+let tc_min:=(_ampl_elapsed_time + _total_solve_elapsed_time)/60;
+printf "Tiempo de computo en (seg): %4.2f \n",tc_s;
+printf "Tiempo de computo en (min): %4.2f \n",tc_min;
+
+#escritura de resultados en hojas nuevas de Excel
+printf "\nInicio de escritura de resultados en Excel";
+table ResultadosDespacho OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadosDespacho":
+[Gen],{k in 1..Nperiodos} <{i in 1..Ngeneradores} Despacho[k,i] ~ ("H " & k)>;
+write table ResultadosDespacho;	
+
+table ResultadoPML OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPML":
+[Nodos],{k in 1..Nperiodos} <{i in 1..Nnodos} PML[k,i] ~ ("H " & k)>;
+write table ResultadoPML;	
+
+table ResultadoPMLesce OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPMLesce":
+[Nesce],{k in 1..Nnodos} <{i in 1..Nescenarios} PMLese[k,i] ~ ("N " & k)>;
+write table ResultadoPMLesce;	
+
+table ResultadoPotenciaBalanceTotal OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPotenciaBalanceTotal":
+[Esc],{k in 1..Ngeneradores} <{i in 1..Nescenarios} PBalance[k,i] ~ ("G " & k)>;
+write table ResultadoPotenciaBalanceTotal;	
+
+table ResultadoPotenciaBalanceArriba OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPotenciaBalanceArriba":
+[Esc],{k in 1..Ngeneradores} <{i in 1..Nescenarios} AuPot[k,i] ~ ("G " & k)>;
+write table ResultadoPotenciaBalanceArriba;	
+
+table ResultadoPotenciaBalanceAbajo OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPotenciaBalanceAbajo":
+[Esc],{k in 1..Ngeneradores} <{i in 1..Nescenarios} -DisPot[k,i] ~ ("G " & k)>;
+write table ResultadoPotenciaBalanceAbajo;	
+
+table ResultadoPotenciaDerramada OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoPotenciaDerramada":
+[Esc],{k in 1..1} <{i in 1..Nescenarios} PD[i] ~ ("MW" & k)>;
+write table ResultadoPotenciaDerramada;
+
+table ResultadoBeneficio OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoBeneficio":
+[Esc],{k in 1..Ngeneradores} <{i in 1..Nescenarios} Beneficio[k,i] ~ ("$" & k)>;
+write table ResultadoBeneficio;
+
+table ResultadoBeneficioEsperanza OUT "ODBC" "DatosDespachoBinivel24N.xlsx" "ResultadoBeneficioEsperanza":
+[Gen], BeneficioEsperanza;
+write table ResultadoBeneficioEsperanza;
+
+#table ResultadosDespacho OUT "ODBC" "DatosDespachoBi2N.xlsx" "ResultadosDespacho":
+#[Ngeneradores], Potgenerador~("Potencia");
+#write table ResultadosDespacho;
+
+#table ResultadoFlujos OUT "ODBC" "DatosDespachoBi2N.xlsx" "ResultadoFlujos":
+#[Linea],FP~("Flujo (MW)");
+#write table ResultadoFlujos;	
+
+#table ResultadoDeltas OUT "ODBC" "DatosDespachoBi2N.xlsx" "Deltas":
+#[Nnodos],Delta~("Grados");
+#write table ResultadoDeltas;	
+printf "\nFin de escritura de resultados en Excel\n";
